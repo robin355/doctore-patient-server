@@ -38,6 +38,7 @@ async function run() {
         const doctorCollection = client.db('doctorPortal').collection('appointmentOptions')
         const bookingsCollection = client.db('doctorPortal').collection('bookings')
         const usersCollection = client.db('doctorPortal').collection('user')
+        const doctorsInfoCollection = client.db('doctorPortal').collection('doctorsInfo')
         app.get('/appointmentOptions', async (req, res) => {
             const date = req.query.date
             console.log(date)
@@ -111,6 +112,16 @@ async function run() {
             const result = await usersCollection.updateOne(filter, updatedDoc, options)
             res.send(result)
         })
+        app.get('/appointmentSpecialty', async (req, res) => {
+            const query = {}
+            const result = await doctorCollection.find(query).project({ name: 1 }).toArray()
+            res.send(result)
+        })
+
+
+
+
+
         app.post('/bookings', async (req, res) => {
             const booking = req.body
             console.log(booking)
@@ -125,6 +136,17 @@ async function run() {
                 return res.send({ acknowledged: false, message })
             }
             const result = await bookingsCollection.insertOne(booking)
+            res.send(result)
+        })
+        app.get('/doctors', async (req, res) => {
+            const query = {}
+            const result = await doctorsInfoCollection.find(query).toArray()
+            res.send(result)
+        })
+
+        app.post('/doctors', async (req, res) => {
+            const doctor = req.body;
+            const result = await doctorsInfoCollection.insertOne(doctor)
             res.send(result)
         })
     }
