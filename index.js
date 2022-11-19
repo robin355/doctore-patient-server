@@ -8,7 +8,6 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const { query } = require('express')
 app.use(cors())
 app.use(express.json())
-
 app.get('/', (req, res) => {
     res.send('Doctore Portal server Running')
 
@@ -29,16 +28,26 @@ function verifyJWT(req, res, next) {
         req.decoded = decoded
         next()
     })
-
-
 }
-
 async function run() {
     try {
         const doctorCollection = client.db('doctorPortal').collection('appointmentOptions')
         const bookingsCollection = client.db('doctorPortal').collection('bookings')
         const usersCollection = client.db('doctorPortal').collection('user')
         const doctorsInfoCollection = client.db('doctorPortal').collection('doctorsInfo')
+
+        const verifyAdmin = async (req, res, next) => {
+            const decodedEmail = req.decoded.email;
+            const query = { email: decodedEmail }
+            const user = await usersCollection.findOne(query)
+            if (user?.role !== 'admin') {
+                return res.status(403).send({ message: 'forbiden Access' })
+            }
+            next()
+        }
+
+
+
         app.get('/appointmentOptions', async (req, res) => {
             const date = req.query.date
             console.log(date)
@@ -94,13 +103,7 @@ async function run() {
             const user = await usersCollection.findOne(query)
             res.send({ isAdmin: user?.role === 'admin' })
         })
-        app.put('/users/admin/:id', verifyJWT, async (req, res) => {
-            const decodedEmail = req.decoded.email;
-            const query = { email: decodedEmail }
-            const user = await usersCollection.findOne(query)
-            if (user?.role !== 'admin') {
-                return res.status(403).send({ message: 'forbiden Access' })
-            }
+        app.put('/users/admin/:id', verifyJWT, verifyAdmin, async (req, res) => {
             const id = req.params.id
             const filter = { _id: ObjectId(id) }
             const options = { upsert: true }
@@ -117,11 +120,6 @@ async function run() {
             const result = await doctorCollection.find(query).project({ name: 1 }).toArray()
             res.send(result)
         })
-
-
-
-
-
         app.post('/bookings', async (req, res) => {
             const booking = req.body
             console.log(booking)
@@ -138,15 +136,21 @@ async function run() {
             const result = await bookingsCollection.insertOne(booking)
             res.send(result)
         })
-        app.get('/doctors', async (req, res) => {
+        app.get('/doctors', verifyJWT, verifyAdmin, async (req, res) => {
             const query = {}
             const result = await doctorsInfoCollection.find(query).toArray()
             res.send(result)
         })
 
-        app.post('/doctors', async (req, res) => {
+        app.post('/doctors', verifyJWT, verifyAdmin, async (req, res) => {
             const doctor = req.body;
             const result = await doctorsInfoCollection.insertOne(doctor)
+            res.send(result)
+        })
+        app.delete('/doctors/:id', verifyJWT, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: ObjectId(id) }
+            const result = await doctorsInfoCollection.deleteOne(filter)
             res.send(result)
         })
     }
@@ -155,7 +159,6 @@ async function run() {
     }
 }
 run().catch(err => console.log(err))
-
 
 //appointmentOptions,doctorPortal
 app.listen(port, () => {
