@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken')
 const port = process.env.PORT || 5000
 const cors = require('cors')
 require('dotenv').config()
+const stripe = require("stripe")(process.env.STRIPE_SCREET_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const { query } = require('express')
 app.use(cors())
@@ -31,10 +32,11 @@ function verifyJWT(req, res, next) {
 }
 async function run() {
     try {
-        const doctorCollection = client.db('doctorPortal').collection('appointmentOptions')
+        const appointmentOptionsCollection = client.db('doctorPortal').collection('appointmentOptions')
         const bookingsCollection = client.db('doctorPortal').collection('bookings')
         const usersCollection = client.db('doctorPortal').collection('user')
         const doctorsInfoCollection = client.db('doctorPortal').collection('doctorsInfo')
+        const PaymentCollection = client.db('doctorPortal').collection('payment')
 
         const verifyAdmin = async (req, res, next) => {
             const decodedEmail = req.decoded.email;
@@ -47,15 +49,89 @@ async function run() {
         }
 
 
+        app.post('/create-payment-intent', async (req, res) => {
+            const booking = req.body;
+            const price = booking.price;
+            const amount = price * 100;
 
+            const paymentIntent = await stripe.paymentIntents.create({
+                currency: 'usd',
+                amount: amount,
+                "payment_method_types": [
+                    "card"
+                ]
+            });
+            res.send({
+                clientSecret: paymentIntent.client_secret,
+            });
+        });
+        app.post('/payments', async (req, res) => {
+            const payment = req.body;
+            const result = await PaymentCollection.insertOne(payment);
+            const id = payment.bookingId
+            const filter = { _id: ObjectId(id) }
+            const updatedDoc = {
+                $set: {
+                    paid: true,
+                    transactionId: payment.transactionId
+                }
+            }
+            const updatedResult = await bookingsCollection.updateOne(filter, updatedDoc)
+            res.send(result)
+        })
+        app.get('/v2/appointmentOptions', async (req, res) => {
+            const date = req.query.date;
+            const options = await appointmentOptionsCollection.aggregate([
+                {
+                    $lookup: {
+                        from: 'bookings',
+                        localField: 'name',
+                        foreignField: 'treatment',
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $eq: ['$appointmentDate', date]
+                                    }
+                                }
+                            }
+                        ],
+                        as: 'booked'
+                    }
+                },
+                {
+                    $project: {
+                        name: 1,
+                        price: 1,
+                        slots: 1,
+                        booked: {
+                            $map: {
+                                input: '$booked',
+                                as: 'book',
+                                in: '$$book.slot'
+                            }
+                        }
+                    }
+                },
+                {
+                    $project: {
+                        name: 1,
+                        price: 1,
+                        slots: {
+                            $setDifference: ['$slots', '$booked']
+                        }
+                    }
+                }
+            ]).toArray();
+            res.send(options);
+        })
         app.get('/appointmentOptions', async (req, res) => {
             const date = req.query.date
             console.log(date)
             const query = {}
-            const Options = await doctorCollection.find(query).toArray()
+            const Options = await appointmentOptionsCollection.find(query).toArray()
             const booking = { appointmentDate: date }
             const allreadyBook = await bookingsCollection.find(booking).toArray()
-            console.log(allreadyBook)
             Options.forEach(option => {
                 const optionBook = allreadyBook.filter(book => book.treatment === option.name)
                 const bookSlots = optionBook.map(book => book.slot)
@@ -82,11 +158,12 @@ async function run() {
             const query = { email: email }
             const user = await usersCollection.findOne(query)
             if (user) {
-                const token = jwt.sign({ email }, process.env.ACCESS_TOKEN, { expiresIn: '1hr' })
+                const token = jwt.sign({ email }, process.env.ACCESS_TOKEN, { expiresIn: '2hr' })
                 return res.send({ accessToken: token })
             }
             res.status(403).send({ accessToken: '' })
         })
+
         app.get('/bookings', verifyJWT, async (req, res) => {
             const email = req.query.email;
             const decodedEmail = req.decoded.email
@@ -96,6 +173,12 @@ async function run() {
             const query = { email: email }
             const bookings = await bookingsCollection.find(query).toArray()
             res.send(bookings)
+        })
+        app.get('/bookings/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: ObjectId(id) };
+            const booking = await bookingsCollection.findOne(query);
+            res.send(booking);
         })
         app.get('/users/admin/:email', async (req, res) => {
             const email = req.params.email;
@@ -115,9 +198,21 @@ async function run() {
             const result = await usersCollection.updateOne(filter, updatedDoc, options)
             res.send(result)
         })
+        // app.get('/addPrice', async (req, res) => {
+        //     const filter = {}
+        //     const options = { upsert: true }
+        //     const updatedDoc = {
+        //         $set: {
+        //             price: 99
+        //         }
+        //     }
+        //     const result = await appointmentOptionsCollection.updateMany(filter, updatedDoc, options);
+        //     res.send(result);
+        // })
+
         app.get('/appointmentSpecialty', async (req, res) => {
             const query = {}
-            const result = await doctorCollection.find(query).project({ name: 1 }).toArray()
+            const result = await appointmentOptionsCollection.find(query).project({ name: 1 }).toArray()
             res.send(result)
         })
         app.post('/bookings', async (req, res) => {
